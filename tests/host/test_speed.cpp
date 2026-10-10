@@ -83,5 +83,43 @@ int main()
 	assert(parked.speed() == 0 && parked.trip() == 0 && parked.maximum() == 0);
 	parked.accept(3000, true, 2.0);
 	assert(parked.speed() == 2.0 && parked.trip() > 0);
-	puts("PASS: real NMEA parser, invalid/stale fixes, trip gaps, reset, rollover, parked drift cutoff");
+	SpeedState filtered(2500, 2.0, 300, true);
+	filtered.accept(1000, true, 0);
+	filtered.accept(2000, true, 9.3);
+	filtered.accept(3000, true, 0);
+	assert(filtered.speed() == 0 && filtered.trip() == 0 && filtered.maximum() == 0);
+	filtered.accept(4000, true, 20);
+	filtered.accept(5000, true, 21);
+	assert(filtered.speed() == 20); // Sustained movement passes.
+	filtered.accept(6000, true, 90);
+	assert(filtered.speed() == 21); // One-sample jump suppressed.
+	filtered.accept(7000, true, 22);
+	assert(filtered.speed() == 22);
+	filtered.accept(8000, true, 180);
+	assert(filtered.speed() == 180); // Warning must not wait for confirmation.
+	filtered.accept(9000, false, 0);
+	assert(!filtered.fresh(9000));
+	filtered.accept(10000, true, 1);
+	assert(filtered.speed() == 0); // Old samples cannot survive a lost fix.
+	filtered.accept(14000, true, 20);
+	assert(filtered.speed() == 0); // Stale window also resets.
+	TinyGPSPlus quality_gps;
+	SpeedState quality_speed(2500, 2.0, 300);
+	RmcReader quality_reader(quality_gps, quality_speed, true);
+	for (uint32_t now = 1000; now <= 4000; now += 1000) {
+		feed(quality_reader, "GPGGA,120000,0610.000,S,10649.000,E,1,08,1.2,10.0,M,0.0,M,,", now);
+		feed(quality_reader, rmc("GP", "A", "10.0"), now);
+		assert(quality_speed.fresh(now) == (now == 4000));
+	}
+	feed(quality_reader, "GPGGA,120000,0610.000,S,10649.000,E,1,04,10.8,10.0,M,0.0,M,,", 5000);
+	feed(quality_reader, rmc("GP", "A", "14.0"), 5000);
+	assert(!quality_speed.fresh(5000)); // Poor HDOP cannot produce live speed.
+	assert(std::string(quality_reader.state(5000)) == "GPS LOW QUALITY");
+	feed(quality_reader, "GPGGA,120000,0610.000,S,10649.000,E,1,03,1.2,10.0,M,0.0,M,,", 6000);
+	feed(quality_reader, rmc("GP", "A", "14.0"), 6000);
+	assert(!quality_speed.fresh(6000)); // Insufficient satellites.
+	feed(quality_reader, rmc("GP", "A", "14.0"), 10000);
+	assert(!quality_speed.fresh(10000)); // Stale GGA cannot qualify a fresh RMC.
+	assert(std::string(quality_reader.state(13000)) == "WAIT FIX / RMC");
+	puts("PASS: NMEA, stale fixes, trip/reset, rollover, speed filter and fix quality");
 }

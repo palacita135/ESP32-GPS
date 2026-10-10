@@ -64,11 +64,9 @@ TFT_eSPI tft;
 Hotspot hotspot;
 StreetMap street_map(tft);
 TFT_eSprite frame(&tft);
-SPIClass touch_spi(VSPI);
-XPT2046_Touchscreen touch(33, 36);
 SpeedState speed(Config::stale_ms, Config::stop_threshold_kmh,
-		 Config::maximum_kmh);
-RmcReader rmc(gps, speed);
+		 Config::maximum_kmh, true);
+RmcReader rmc(gps, speed, true);
 uint32_t last_byte_ms;
 uint32_t byte_count;
 uint32_t diagnostic_byte_count;
@@ -128,9 +126,8 @@ void set_map_page(bool enabled)
 
 void poll_controls(uint32_t now)
 {
-	// Entire screen is one control: no board-specific coordinate calibration.
-	const bool down = digitalRead(0) == LOW ||
-		(Config::resistive_touch_enabled && touch.touched());
+	// BOOT controls page switching and stopped-only reset.
+	const bool down = digitalRead(0) == LOW;
 	if (down && !pressed) {
 		press_ms = now;
 		held = false;
@@ -204,7 +201,7 @@ void draw_ui(Display &canvas, uint32_t now, bool indexed)
 	snprintf(text, sizeof(text), "MAX %.0f", speed.maximum());
 	canvas.drawString(text, width - 16, height - 53, 2);
 	canvas.setTextDatum(TL_DATUM);
-	const char *state = fresh ? "GPS FIX" : "WAIT FIX / RMC";
+	const char *state = fresh ? "GPS FIX" : rmc.state(now);
 	if (!byte_count || now - last_byte_ms > Config::stale_ms)
 		state = "NO GPS DATA";
 	canvas.setTextColor(color(red_phase ? UI_WHITE : (fresh ? UI_GREEN : UI_ORANGE)), background);
@@ -255,6 +252,8 @@ void setup()
 {
 	Serial.begin(115200);
 	btStop();
+	Serial.printf("BOOT diagnostics: reset_reason=%d heap=%u largest=%u\n",
+		      static_cast<int>(esp_reset_reason()), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 	pinMode(0, INPUT_PULLUP);
 	for (const int pin : {4, 16, 17}) {
 		pinMode(pin, OUTPUT);
@@ -262,6 +261,9 @@ void setup()
 	}
 	gps_uart.setRxBufferSize(2048);
 	gps_uart.begin(Config::gps_baud, SERIAL_8N1, Config::gps_rx, Config::gps_tx);
+	// Deselect touch before initializing the shared display SPI bus.
+	pinMode(33, OUTPUT);
+	digitalWrite(33, HIGH);
 	tft.init();
 	tft.setRotation(Config::rotation);
 	tft.fillScreen(TFT_BLACK);
@@ -279,14 +281,13 @@ void setup()
 	}
 	track.begin();
 	track.on_position([](double lat, double lon, bool gap, uint32_t now) {
-		street_map.add(lat, lon, gap, now, speed.fresh(now) && speed.speed() > 0);
+		static bool quality_gap = true;
+		if (!speed.fresh(now)) { quality_gap = true; return; }
+		street_map.add(lat, lon, gap || quality_gap, now, speed.speed() > 0);
+		quality_gap = false;
 	});
 	hotspot.begin();
 	street_map.begin();
-	if (Config::resistive_touch_enabled) {
-		touch_spi.begin(25, 39, 32, 33);
-		touch.begin(touch_spi);
-	}
 	Serial.printf("GPS UART2: %lu baud, ESP32 RX GPIO%d <- GPS TX, ESP32 TX GPIO%d -> GPS RX\n",
 		      static_cast<unsigned long>(Config::gps_baud), Config::gps_rx, Config::gps_tx);
 	draw_splash();
@@ -318,7 +319,9 @@ void loop()
 			static uint32_t last_revision = 0;
 			const bool refresh = last_revision != street_map.revision();
 			last_revision = street_map.revision();
-			const String wifi_status = hotspot.status(), tile_status = street_map.status();
+			const String wifi_status = hotspot.status();
+			const char *map_status = street_map.status();
+			const String tile_status = strcmp(map_status, "Waiting for GPS position") == 0 ? rmc.state(now) : map_status;
 			tft.setTextDatum(TR_DATUM);
 			tft.setTextColor(TFT_WHITE, TFT_BLACK);
 			if (refresh || wifi_status != last_wifi_status) {
@@ -364,6 +367,9 @@ void loop()
 		gps_sample_count = 0;
 		Serial.printf("GPS quality: satellites=%lu HDOP=%.2f hdop_age_ms=%lu raw_speed=%.2f\n",
 			      gps.satellites.value(), gps.hdop.hdop(), gps.hdop.age(), gps.speed.kmph());
+		Serial.printf("SYSTEM: heap=%u largest=%u loop_stack_min=%u gps_state=%s\n",
+			      ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
+			      static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)), rmc.state(now));
 	}
 	delay(1);  // Yield to RTOS; no blocking GPS wait or acquisition screen.
 }

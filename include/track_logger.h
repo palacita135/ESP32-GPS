@@ -14,8 +14,7 @@
 // SD writes/flushes may block; this is not a hard real-time storage device.
 class TrackLogger {
 public:
-	static_assert(!Config::resistive_touch_enabled,
-		"Verify touch/SD SPI sharing before enabling touch");
+	// Touch shares display HSPI; this SD owner uses independent VSPI.
 	TrackLogger()
 		: spi_(VSPI), gp_status_(gps_, "GPRMC", 2),
 		  gn_status_(gps_, "GNRMC", 2), gp_date_(gps_, "GPRMC", 9),

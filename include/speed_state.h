@@ -7,9 +7,10 @@
 // times handle millis() rollover. Trip is speed integration, not an odometer.
 class SpeedState {
 public:
-	SpeedState(uint32_t stale_ms, double stop_threshold, double maximum)
+	SpeedState(uint32_t stale_ms, double stop_threshold, double maximum,
+		   bool filter = false)
 		: stale_ms_(stale_ms), stop_threshold_(stop_threshold),
-		  maximum_(maximum) {}
+		  maximum_(maximum), filter_(filter) {}
 
 	void accept(uint32_t now, bool valid, double kmh)
 	{
@@ -17,9 +18,26 @@ public:
 			invalidate();
 			return;
 		}
+		const uint32_t elapsed = now - last_ms_;
+		if (filter_) {
+			if (!valid_ || elapsed > stale_ms_) {
+				for (double &sample : samples_) sample = 0;
+				sample_index_ = 0;
+				moving_ = false;
+			}
+			samples_[sample_index_] = kmh;
+			sample_index_ = (sample_index_ + 1) % 3;
+			const double a = samples_[0], b = samples_[1], c = samples_[2];
+			const double median = a + b + c - fmin(a, fmin(b, c)) - fmax(a, fmax(b, c));
+			// Do not delay the overspeed warning behind the median window.
+			if (kmh < 180.0) kmh = median;
+			const double start_threshold = stop_threshold_ + 1.0;
+			if (!moving_ && kmh >= start_threshold) moving_ = true;
+			if (moving_ && kmh < stop_threshold_) moving_ = false;
+			if (!moving_) kmh = 0;
+		}
 		if (kmh < stop_threshold_)
 			kmh = 0;
-		const uint32_t elapsed = now - last_ms_;
 		if (valid_ && elapsed <= stale_ms_)
 			trip_km_ += (kmh + speed_kmh_) * 0.5 * elapsed / 3600000.0;
 		speed_kmh_ = kmh;
@@ -57,6 +75,10 @@ private:
 	double maximum_;
 	uint32_t last_ms_ = 0;
 	bool valid_ = false;
+	bool filter_;
+	bool moving_ = false;
+	double samples_[3] = {};
+	uint8_t sample_index_ = 0;
 	double speed_kmh_ = 0;
 	double trip_km_ = 0;
 	double max_kmh_ = 0;

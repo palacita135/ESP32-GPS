@@ -52,7 +52,7 @@ is also available. Regenerate previews with `python scripts/generate-ui-previews
 - Session trip distance integrated from speed, and session maximum speed.
 - Press BOOT to switch SPEED / MAP. Hold it for two seconds to reset
   trip/max **only with a fresh zero-speed reading**; release it before powering
-  up or resetting. Touch is disabled until the R/C variant is confirmed.
+  up or resetting. Touch controls are disabled; MAP follows GPS automatically at zoom 16.
 - 2.4 GHz Wi-Fi hotspot setup and on-device OSM street map, with live GPS
   marker and a simplified session route. Bluetooth disabled.
 - Automatic SD CSV track per boot: WGS84 longitude/latitude, GPS UTC, elapsed
@@ -69,14 +69,36 @@ before HTTPS downloads. Decoding pauses while a download is in progress so
 the inflate buffer and TLS handshake do not compete for limited ESP32 RAM.
 HTTPS tile bodies are passed to the main loop in chunks of at most 2 KB and
 written to `/tiles/*.png.part`. The one-item queue limits buffered chunks;
-the complete PNG is never allocated in RAM. Only a complete response with a
+the complete PNG is not held in RAM during HTTPS. Only a complete response with a
 PNG signature is promoted to the cache; failed partial files are removed.
+HTTPClient decodes HTTP transfer framing before the PNG chunks are queued,
+including responses without a Content-Length. SD open, SD write, invalid PNG
+and size failures are reported separately. Touch calibration and manual map controls are disabled; the map follows GPS
+automatically at fixed zoom level 16.
+
+After TLS finishes, the decoder is allocated first. Cached tiles are then read
+in SD reads of at most 512 bytes into separate 2 KB RAM blocks (48 KB maximum
+total), checked for complete PNG chunk framing, then decoded from those blocks.
+This avoids a large contiguous tile allocation and SD callbacks inside inflate.
+The temporary tile blocks and decoder are released after each tile; allocation
+failures back off five seconds rather than repeatedly retrying every loop. Serial
+`MAP decode start/end` messages identify read/decode failures.
+
+Live speed/map updates require fresh GGA satellite and HDOP values, at least
+four satellites and HDOP at most 3.0, stable for three seconds. Poor or stale
+quality resets this waiting period and invalidates live speed. Raw CSV samples
+are still recorded for analysis; GPS quality alone does not prove motion.
 
 Trip/max reset at power-off and are not a persistent odometer. Trip omits GPS
 outages; it will undercount distance in tunnels. There is no position processing
 or map projection in the speed display: this uses the receiver's reported ground speed directly.
-The configurable 2 km/h deadband reduces stationary creep, but hides movement
-below that threshold. No additional smoothing is used, to avoid adding lag.
+Speed uses a three-sample median to reject isolated spikes. From stopped,
+the filtered speed must reach 3 km/h to show movement; it returns to zero
+below 2 km/h. This suppresses low-speed jitter but hides very slow movement
+and usually adds one GPS sample of delay (about one second at 1 Hz).
+Valid raw speeds at or above 180 km/h bypass the median for an immediate
+warning. Invalid or stale fixes reset the filter. Trip, maximum and the live
+map use filtered speed; SD CSV preserves the raw GPS values.
 
 ## Hardware and wiring
 
@@ -115,9 +137,9 @@ The 480x320 landscape SPEED UI is drawn through a 480x40 4-bit strip sprite
 pushed without first blanking the LCD. This reduces RAM demand when Wi-Fi is
 enabled. If even the strip cannot be allocated, direct drawing remains available.
 SD uses VSPI: CLK18, MISO19, MOSI23, CS5, at 10 MHz.
-Touch variants differ: R uses XPT2046; C uses GT911. Touch initialization and
-polling are disabled by default. Do not enable the old 2.8-inch touch pin setup
-without verifying your board's controller and pins.
+Touch variants differ: R uses XPT2046; C uses GT911. Touch is disabled.
+The touch controller is deselected on CS33 so it does not drive the display SPI
+bus. BOOT switches SPEED/MAP; MAP always follows GPS at zoom level 16.
 
 ## Power and mounting in the car
 
@@ -214,7 +236,7 @@ Display driver and pins are set in `platformio.ini`, so no globally installed
 TFT_eSPI files need editing. ILI9341, ST7789, ESP32-S3 and other CYD variants
 need different configuration. Confirm your PCB revision before flashing.
 The TFT_eSPI warning about undefined TOUCH_CS is expected: its integrated
-touch support is unused. BOOT controls are enabled; touch is currently disabled.
+built-in TFT touch support is unused. Touch is disabled; BOOT controls remain enabled.
 
 ### Firmware runs but LCD stays black
 
@@ -247,8 +269,19 @@ Restore the speedometer after testing:
 Short-press BOOT to alternate SPEED and MAP (replaces DAY/NIGHT). Brightness is
 the configured day level. Hold BOOT for two seconds for the existing stopped-only
 trip/max reset. An active 180 km/h warning returns to SPEED so the red warning
-remains visible. MAP is north-up, follows your position while moving, and uses fixed zoom 16;
-there is no pan, zoom, route planning, Strava upload or account integration.
+remains visible. MAP is north-up and follows your position while moving.
+MAP stays at zoom level 16 and follows your position automatically while
+moving. There are no zoom, pan or recenter buttons and no touch calibration.
+BOOT still switches SPEED/MAP. There is no route planning, Strava upload or
+account integration.
+
+Visible missing tiles download automatically as you move and are saved to
+`/tiles/16_x_y.png` on the SD card. Downloads use chunks of at most 2 KB through
+a bounded queue; only the main loop writes to SD. Temporary `.part` files are
+renamed after successful validation. Successful requests do not wait between
+tiles; failures back off 30 seconds. Mobile data, server response, TLS and SD
+speed still affect coverage. Only the current viewport is fetched; no bulk
+or offline-area prefetch is performed.
 
 1. Insert a FAT32 microSD before power-on.
 2. Enable a **2.4 GHz WPA2** smartphone/modem hotspot.

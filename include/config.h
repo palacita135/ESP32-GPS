@@ -3,8 +3,7 @@
 #include <stdint.h>
 
 namespace Config {
-// Touch controller is unconfirmed (3248S035R: XPT2046; C: GT911).
-// Use BOOT controls until the exact touch variant and wiring are identified.
+// MAP automatically follows GPS at fixed zoom 16; use BOOT for pages.
 constexpr bool resistive_touch_enabled = false;
 // P3 UART2: directions are named from the ESP32 perspective.
 constexpr int gps_rx = 35; // P3 IO35 <- GPS TX.
