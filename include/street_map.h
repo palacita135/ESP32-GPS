@@ -7,6 +7,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <new>
+#include <algorithm>
 #include <time.h>
 #include "map_math.h"
 #include "map_root_ca.h"
@@ -14,7 +15,7 @@
 // Main loop exclusively owns SD/TFT/PNG/track state. Worker owns HTTPS.
 class StreetMap {
 	struct Request { int x, y; };
-	struct Result { Request tile; uint8_t *data; size_t size; int code; };
+	struct Result { Request tile; uint8_t *data; size_t size; int code; int tls_code; };
 	struct Point { MapMath::Pixel pixel; bool gap; };
 public:
 	explicit StreetMap(TFT_eSPI &display) : tft_(display) {}
@@ -31,7 +32,8 @@ public:
 	{
 		active_ = active;
 		delete png_;
-		png_ = active ? new (std::nothrow) PNG : nullptr;
+		png_ = nullptr;
+		decoder_failed_ = false;
 		dirty_ = true;
 		if (active) {
 			chrome_drawn_ = false;
@@ -39,8 +41,15 @@ public:
 			++revision_;
 		}
 	}
-	void add(double lat, double lon, bool gap, uint32_t now)
+	void add(double lat, double lon, bool gap, uint32_t now, bool moving = true)
 	{
+		pending_gap_ = pending_gap_ || gap;
+		if (have_fix_ && !moving) {
+			last_fix_ms_ = now;
+			return; // Hold display position; raw SD samples remain untouched.
+		}
+		gap = pending_gap_;
+		pending_gap_ = false;
 		const MapMath::Pixel previous = position_;
 		position_ = MapMath::project(lat, lon);
 		if (have_fix_ && (fabs(position_.x - previous.x) > 1 ||
@@ -78,32 +87,47 @@ public:
 	{
 		Result result;
 		if (results_ && xQueueReceive(results_, &result, 0) == pdTRUE) {
-			busy_ = false;
-			retry_ms_ = now + 30000;
-			if (result.code == 200 && result.data && cache_ready_ &&
-			    result.size >= 24 && !memcmp(result.data, "\x89PNG\r\n\x1a\n", 8)) {
-				char path[64]; tile_path(path, result.tile);
-				String temporary = String(path) + ".part";
-				SD.remove(temporary);
-				File file = SD.open(temporary, FILE_WRITE);
-				if (file && file.write(result.data, result.size) == result.size) {
-					file.close();
+			if (result.code == 206) { // Internal chunk message, not an HTTP status.
+				if (!download_bytes_) {
+					download_ok_ = result.size >= 8 &&
+						!memcmp(result.data, "\x89PNG\r\n\x1a\n", 8);
+					char path[64]; tile_path(path, result.tile);
+					temporary_path_ = String(path) + ".part";
+					SD.remove(temporary_path_);
+					download_file_ = SD.open(temporary_path_, FILE_WRITE);
+				}
+				if (!download_file_ || download_file_.write(result.data, result.size) != result.size)
+					download_ok_ = false;
+				download_bytes_ += result.size;
+				free(result.data);
+			} else {
+				busy_ = false;
+				retry_ms_ = now + 30000;
+				download_file_.close();
+				if (result.code == 200 && download_ok_ && download_bytes_ == result.size && result.size >= 24) {
+					char path[64]; tile_path(path, result.tile);
 					SD.remove(path);
-					if (SD.rename(temporary.c_str(), path)) {
+					if (SD.rename(temporary_path_.c_str(), path)) {
 						status_ = "OSM tiles"; retry_ms_ = now + 2000;
 					} else status_ = "Tile cache rename failed";
 				} else {
-					file.close(); status_ = "Tile cache write failed";
+					if (result.tls_code)
+						snprintf(error_status_, sizeof(error_status_), "TLS error %d / retry 30s", result.tls_code);
+					else if (result.code == 200)
+						snprintf(error_status_, sizeof(error_status_), "Tile cache write/PNG failed");
+					else
+						snprintf(error_status_, sizeof(error_status_), "Tile error %d / retry 30s", result.code);
+					status_ = error_status_;
 				}
-			} else {
-				snprintf(error_status_, sizeof(error_status_), "Tile error %d / retry 30s", result.code);
-				status_ = error_status_;
+				if (temporary_path_.length()) SD.remove(temporary_path_);
+				temporary_path_ = "";
+				Serial.printf("MAP tile %d/%d: code=%d bytes=%u cache=%s\n",
+					      result.tile.x, result.tile.y, result.code,
+					      static_cast<unsigned>(result.size), status_);
+				download_bytes_ = 0;
+				download_ok_ = false;
+				cursor_ = 0;
 			}
-			Serial.printf("MAP tile %d/%d: code=%d bytes=%u cache=%s\n",
-				      result.tile.x, result.tile.y, result.code,
-				      static_cast<unsigned>(result.size), status_);
-			free(result.data);
-			cursor_ = 0;
 		}
 		if (!active_) return;
 		if (dirty_) {
@@ -115,7 +139,7 @@ public:
 			base_y_ = centered_ ? static_cast<int>(floor((center_.y - 134) / 256)) : 0;
 			dirty_ = false;
 		}
-		if (centered_ && png_ && cursor_ < 9) {
+		if (centered_ && cursor_ < 9) {
 			const int slot = cursor_;
 			const int tx = base_x_ + cursor_ % 3, ty = base_y_ + cursor_ / 3;
 			++cursor_;
@@ -126,7 +150,7 @@ public:
 				Request request{MapMath::wrap_tile(tx), ty};
 				char path[64]; tile_path(path, request);
 				if (cache_ready_ && SD.exists(path)) {
-					if (!loaded_[slot]) loaded_[slot] = draw_tile(path, px, py);
+					if (!loaded_[slot] && !busy_) loaded_[slot] = draw_tile(path, px, py);
 				} else {
 					if (!placeholder_[slot]) {
 						tft_.setViewport(0, 32, 480, 268, false);
@@ -162,7 +186,7 @@ public:
 		if (!worker_ready_) return "Network worker: low RAM";
 		if (WiFi.status() != WL_CONNECTED) return "WiFi not connected / cached tiles";
 		if (!centered_) return "Waiting for GPS position";
-		if (active_ && !png_) return "Map decoder: low RAM";
+		if (decoder_failed_) return "Map decoder: low RAM";
 		if (time(nullptr) <= 1700000000) return "Waiting for network time (TLS)";
 		return status_;
 	}
@@ -174,13 +198,13 @@ private:
 		Request request;
 		for (;;) {
 			if (xQueueReceive(self->requests_, &request, portMAX_DELAY) != pdTRUE) continue;
-			Result result{request, nullptr, 0, -1};
+			Result result{request, nullptr, 0, -1, 0};
 			{
 				WiFiClientSecure client;
 				client.setCACert(map_root_ca);
-				client.setHandshakeTimeout(5);
+				client.setHandshakeTimeout(15);
 				HTTPClient http;
-				http.setConnectTimeout(5000); http.setTimeout(5000);
+				http.setConnectTimeout(15000); http.setTimeout(15000);
 				char url[128];
 				snprintf(url, sizeof(url), "https://tile.openstreetmap.org/%d/%d/%d.png",
 					 MapMath::zoom, request.x, request.y);
@@ -190,22 +214,32 @@ private:
 					if (result.code < 0) {
 						char tls_error[160] = {};
 						const int tls_code = client.lastError(tls_error, sizeof(tls_error));
+						result.tls_code = tls_code;
 						Serial.printf("MAP HTTPS: %s; TLS=%d %s\n",
 							      HTTPClient::errorToString(result.code).c_str(), tls_code, tls_error);
+						Serial.printf("MAP network: UTC=%lld RSSI=%d heap=%u largest=%u\n",
+							      static_cast<long long>(time(nullptr)), WiFi.RSSI(),
+							      ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 					}
 					const int length = http.getSize();
 					if (result.code == 200 && length > 0 && length <= 49152) {
-						result.data = static_cast<uint8_t *>(malloc(length));
-						if (result.data) {
-							http.getStreamPtr()->setTimeout(5000);
-							result.size = http.getStreamPtr()->readBytes(result.data, length);
-							if (result.size != static_cast<size_t>(length)) result.code = -2;
-						} else result.code = -100; // Tile buffer allocation failed.
+						http.getStreamPtr()->setTimeout(15000);
+						while (result.size < static_cast<size_t>(length)) {
+							const size_t count = std::min(static_cast<size_t>(2048), static_cast<size_t>(length) - result.size);
+							auto *data = static_cast<uint8_t *>(malloc(count));
+							if (!data) { result.code = -100; break; }
+							const size_t bytes = http.getStreamPtr()->readBytes(data, count);
+							if (bytes != count) { free(data); result.code = -2; break; }
+							Result chunk{request, data, bytes, 206, 0};
+							xQueueSend(self->results_, &chunk, portMAX_DELAY);
+							result.size += bytes;
+						}
+
 					}
 					else if (result.code == 200) result.code = -101; // Invalid/oversized body.
 					http.end();
 				}
-			} // Release TLS memory before main loop consumes the buffer.
+			} // Release TLS memory before signalling completion and allowing PNG decode.
 			xQueueSend(self->results_, &result, portMAX_DELAY);
 		}
 	}
@@ -246,6 +280,10 @@ private:
 	}
 	bool draw_tile(const char *path, int x, int y)
 	{
+		// PNGdec owns a large inflate buffer. Never keep it alive during TLS.
+		png_ = new (std::nothrow) PNG;
+		decoder_failed_ = !png_;
+		if (!png_) return false;
 		bool valid = false;
 		tile_x_ = x; tile_y_ = y;
 		tft_.setViewport(0, 32, 480, 268, false);
@@ -257,6 +295,8 @@ private:
 			png_->close();
 		}
 		tft_.resetViewport();
+		delete png_;
+		png_ = nullptr;
 		if (!valid) {
 			status_ = "Corrupt tile / retry later";
 			SD.remove(path);
@@ -296,10 +336,14 @@ private:
 		tft_.drawString("PALACITA 135 / MAP", 10, 7, 2);
 		tft_.drawString("(c) OpenStreetMap contributors", 8, 306, 1);
 		if (!have_fix_) tft_.drawString("Waiting for GPS position", 80, 150, 2);
-		else if (!png_) tft_.drawString("Map decoder: insufficient RAM", 70, 150, 2);
+		else if (decoder_failed_) tft_.drawString("Map decoder: insufficient RAM", 70, 150, 2);
 	}
 	TFT_eSPI &tft_;
 	PNG *png_ = nullptr;
+	File download_file_;
+	String temporary_path_;
+	size_t download_bytes_ = 0;
+	bool download_ok_ = false;
 	QueueHandle_t requests_ = nullptr, results_ = nullptr;
 	static constexpr size_t capacity = 512;
 	Point points_[capacity];
@@ -308,6 +352,8 @@ private:
 	uint32_t last_fix_ms_ = 0, last_sweep_ms_ = 0, last_overlay_ms_ = 0, retry_ms_ = 0;
 	int cursor_ = 0, base_x_ = 0, base_y_ = 0, tile_x_ = 0, tile_y_ = 0;
 	bool active_ = false, have_fix_ = false, centered_ = false, dirty_ = true;
+	bool pending_gap_ = false;
+	bool decoder_failed_ = false;
 	bool busy_ = false, cache_ready_ = false, worker_ready_ = false, requested_ = false;
 	bool loaded_[9] = {}, placeholder_[9] = {}, chrome_drawn_ = false;
 	uint32_t revision_ = 0;

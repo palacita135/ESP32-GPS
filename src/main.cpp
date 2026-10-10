@@ -279,7 +279,7 @@ void setup()
 	}
 	track.begin();
 	track.on_position([](double lat, double lon, bool gap, uint32_t now) {
-		street_map.add(lat, lon, gap, now);
+		street_map.add(lat, lon, gap, now, speed.fresh(now) && speed.speed() > 0);
 	});
 	hotspot.begin();
 	street_map.begin();
@@ -362,6 +362,8 @@ void loop()
 		}
 		diagnostic_byte_count = byte_count;
 		gps_sample_count = 0;
+		Serial.printf("GPS quality: satellites=%lu HDOP=%.2f hdop_age_ms=%lu raw_speed=%.2f\n",
+			      gps.satellites.value(), gps.hdop.hdop(), gps.hdop.age(), gps.speed.kmph());
 	}
 	delay(1);  // Yield to RTOS; no blocking GPS wait or acquisition screen.
 }

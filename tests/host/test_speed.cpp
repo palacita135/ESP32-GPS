@@ -77,5 +77,11 @@ int main()
 	state.expire(4000);
 	assert(!state.fresh(4000));
 	assert(!state.reset_if_stopped(4000));
-	puts("PASS: real NMEA parser, invalid/stale fixes, trip gaps, reset, rollover");
+	SpeedState parked(2500, 2.0, 300);
+	parked.accept(1000, true, 1.9);
+	parked.accept(2000, true, 1.2);
+	assert(parked.speed() == 0 && parked.trip() == 0 && parked.maximum() == 0);
+	parked.accept(3000, true, 2.0);
+	assert(parked.speed() == 2.0 && parked.trip() > 0);
+	puts("PASS: real NMEA parser, invalid/stale fixes, trip gaps, reset, rollover, parked drift cutoff");
 }

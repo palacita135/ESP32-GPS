@@ -22,7 +22,7 @@ constexpr int backlight_channel = 7;
 constexpr uint8_t day_brightness = 220;
 constexpr uint8_t night_brightness = 35;
 // This suppresses stationary GPS creep but also hides very slow motion.
-constexpr double stop_threshold_kmh = 0.8;
+constexpr double stop_threshold_kmh = 2.0;
 // Sanity bound, not a vehicle speed limiter.
 constexpr double maximum_kmh = 300.0;
 }

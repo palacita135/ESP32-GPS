@@ -58,10 +58,24 @@ is also available. Regenerate previews with `python scripts/generate-ui-previews
 - Automatic SD CSV track per boot: WGS84 longitude/latitude, GPS UTC, elapsed
   milliseconds, recent GGA altitude, altitude age and raw GPS speed.
 
+The live map holds its last position while the filtered speed is zero, reducing
+parked position drift. SD recording still saves raw valid GPS samples while
+stationary. This is not a guarantee of motion detection: poor GPS reception can
+report speeds above the cutoff even when parked. Serial diagnostics include
+satellites, HDOP and raw speed to help assess reception.
+
+The PNG decoder is allocated only while drawing a cached tile and released
+before HTTPS downloads. Decoding pauses while a download is in progress so
+the inflate buffer and TLS handshake do not compete for limited ESP32 RAM.
+HTTPS tile bodies are passed to the main loop in chunks of at most 2 KB and
+written to `/tiles/*.png.part`. The one-item queue limits buffered chunks;
+the complete PNG is never allocated in RAM. Only a complete response with a
+PNG signature is promoted to the cache; failed partial files are removed.
+
 Trip/max reset at power-off and are not a persistent odometer. Trip omits GPS
 outages; it will undercount distance in tunnels. There is no position processing
 or map projection in the speed display: this uses the receiver's reported ground speed directly.
-The configurable 0.8 km/h deadband reduces stationary creep, but hides movement
+The configurable 2 km/h deadband reduces stationary creep, but hides movement
 below that threshold. No additional smoothing is used, to avoid adding lag.
 
 ## Hardware and wiring
@@ -233,7 +247,7 @@ Restore the speedometer after testing:
 Short-press BOOT to alternate SPEED and MAP (replaces DAY/NIGHT). Brightness is
 the configured day level. Hold BOOT for two seconds for the existing stopped-only
 trip/max reset. An active 180 km/h warning returns to SPEED so the red warning
-remains visible. MAP is north-up, follows your position, and uses fixed zoom 16;
+remains visible. MAP is north-up, follows your position while moving, and uses fixed zoom 16;
 there is no pan, zoom, route planning, Strava upload or account integration.
 
 1. Insert a FAT32 microSD before power-on.
