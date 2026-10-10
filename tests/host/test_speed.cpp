@@ -88,21 +88,31 @@ int main()
 	filtered.accept(2000, true, 9.3);
 	filtered.accept(3000, true, 0);
 	assert(filtered.speed() == 0 && filtered.trip() == 0 && filtered.maximum() == 0);
-	filtered.accept(4000, true, 20);
-	filtered.accept(5000, true, 21);
-	assert(filtered.speed() == 20); // Sustained movement passes.
-	filtered.accept(6000, true, 90);
+	for (uint32_t now = 4000; now <= 12000; now += 1000)
+		filtered.accept(now, true, 4.4);
+	assert(filtered.speed() == 0 && filtered.trip() == 0); // Recorded parked drift.
+	filtered.accept(13000, true, 20);
+	filtered.accept(14000, true, 21);
+	filtered.accept(15000, true, 21);
+	filtered.accept(16000, true, 21);
+	assert(filtered.speed() == 0); // Require sustained onset, not only two samples.
+	filtered.accept(17000, true, 21);
+	assert(filtered.speed() == 21);
+	filtered.accept(18000, true, 90);
 	assert(filtered.speed() == 21); // One-sample jump suppressed.
-	filtered.accept(7000, true, 22);
-	assert(filtered.speed() == 22);
-	filtered.accept(8000, true, 180);
+	filtered.accept(19000, true, 23);
+	assert(filtered.speed() == 22); // Smooth the median while driving.
+	filtered.accept(20000, true, 180);
 	assert(filtered.speed() == 180); // Warning must not wait for confirmation.
-	filtered.accept(9000, false, 0);
-	assert(!filtered.fresh(9000));
-	filtered.accept(10000, true, 1);
+	filtered.accept(21000, false, 0);
+	assert(!filtered.fresh(21000) && filtered.speed() == 0);
+	filtered.accept(22000, true, 1);
 	assert(filtered.speed() == 0); // Old samples cannot survive a lost fix.
-	filtered.accept(14000, true, 20);
+	filtered.accept(26000, true, 20);
 	assert(filtered.speed() == 0); // Stale window also resets.
+	SpeedState warning_start(2500, 2.0, 300, true);
+	warning_start.accept(1000, true, 180);
+	assert(warning_start.speed() == 180);
 	TinyGPSPlus quality_gps;
 	SpeedState quality_speed(2500, 2.0, 300);
 	RmcReader quality_reader(quality_gps, quality_speed, true);

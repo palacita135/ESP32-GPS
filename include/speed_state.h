@@ -24,6 +24,7 @@ public:
 				for (double &sample : samples_) sample = 0;
 				sample_index_ = 0;
 				moving_ = false;
+				start_pending_ = false;
 			}
 			samples_[sample_index_] = kmh;
 			sample_index_ = (sample_index_ + 1) % 3;
@@ -31,10 +32,22 @@ public:
 			const double median = a + b + c - fmin(a, fmin(b, c)) - fmax(a, fmax(b, c));
 			// Do not delay the overspeed warning behind the median window.
 			if (kmh < 180.0) kmh = median;
-			const double start_threshold = stop_threshold_ + 1.0;
-			if (!moving_ && kmh >= start_threshold) moving_ = true;
+			const double start_threshold = fmax(5.0, stop_threshold_ + 1.0);
+			if (!moving_) {
+				if (kmh >= 180.0) moving_ = true;
+				else if (kmh >= start_threshold) {
+					if (!start_pending_) { start_since_ = now; start_pending_ = true; }
+					if (now - start_since_ >= 3000) moving_ = true;
+				} else start_pending_ = false;
+			}
 			if (moving_ && kmh < stop_threshold_) moving_ = false;
 			if (!moving_) kmh = 0;
+			else {
+				start_pending_ = false;
+				// Smooth while already moving; startup and warning stay explicit.
+				if (valid_ && speed_kmh_ > 0 && elapsed <= stale_ms_ && kmh < 180.0)
+					kmh = speed_kmh_ + 0.5 * (kmh - speed_kmh_);
+			}
 		}
 		if (kmh < stop_threshold_)
 			kmh = 0;
@@ -47,7 +60,7 @@ public:
 		valid_ = true;
 	}
 
-	void invalidate() { valid_ = false; }
+	void invalidate() { valid_ = false; speed_kmh_ = 0; start_pending_ = false; }
 	bool fresh(uint32_t now) const
 	{
 		return valid_ && now - last_ms_ <= stale_ms_;
@@ -77,6 +90,8 @@ private:
 	bool valid_ = false;
 	bool filter_;
 	bool moving_ = false;
+	bool start_pending_ = false;
+	uint32_t start_since_ = 0;
 	double samples_[3] = {};
 	uint8_t sample_index_ = 0;
 	double speed_kmh_ = 0;

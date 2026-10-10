@@ -93,9 +93,10 @@ Trip/max reset at power-off and are not a persistent odometer. Trip omits GPS
 outages; it will undercount distance in tunnels. There is no position processing
 or map projection in the speed display: this uses the receiver's reported ground speed directly.
 Speed uses a three-sample median to reject isolated spikes. From stopped,
-the filtered speed must reach 3 km/h to show movement; it returns to zero
-below 2 km/h. This suppresses low-speed jitter but hides very slow movement
-and usually adds one GPS sample of delay (about one second at 1 Hz).
+the filtered speed must stay at or above 5 km/h for three seconds to show
+movement; it returns to zero below 2 km/h. While moving, each update blends
+half the new median with half the previous displayed speed. This suppresses low-speed jitter but hides very slow movement
+and adds a median sample delay plus three seconds when starting from zero.
 Valid raw speeds at or above 180 km/h bypass the median for an immediate
 warning. Invalid or stale fixes reset the filter. Trip, maximum and the live
 map use filtered speed; SD CSV preserves the raw GPS values.
