@@ -21,6 +21,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Track test compilation failed.' }
     & '.\.pio\host-tests\test_track.exe'
     if ($LASTEXITCODE -ne 0) { throw 'Track tests failed.' }
+    & cl.exe /nologo /EHsc /std:c++17 /W4 /Iinclude tests\host\test_map_math.cpp /Fe:.pio/host-tests/test_map_math.exe /Fo:.pio/host-tests/
+    if ($LASTEXITCODE -ne 0) { throw 'Map projection compilation failed.' }
+    & '.\.pio\host-tests\test_map_math.exe'
+    if ($LASTEXITCODE -ne 0) { throw 'Map projection tests failed.' }
 } finally {
     Pop-Location
 }

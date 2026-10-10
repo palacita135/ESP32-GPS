@@ -4,6 +4,8 @@
 #include "track_logger.h"
 
 uint32_t test_now_ms;
+static unsigned int map_updates;
+static bool map_gap;
 
 static void feed(TrackLogger &logger, const std::string &body, uint32_t now,
 		 bool corrupt = false)
@@ -54,5 +56,17 @@ int main()
 	test_write_failure = true;
 	feed(next_boot, rmc, 12000);
 	assert(std::string(next_boot.state()) == "SD ERROR");
+	next_boot.on_position([](double latitude, double longitude, bool gap, uint32_t) {
+		assert(fabs(latitude + 6.1666667) < 0.000001);
+		assert(fabs(longitude - 106.8166667) < 0.000001);
+		++map_updates; map_gap = gap;
+	});
+	feed(next_boot, rmc, 13000);
+	assert(map_updates == 1); // Live map survives failed SD logging.
+	feed(next_boot, "GPRMC,120002,V,0610.000,S,10649.000,E,10,0,101026", 13500);
+	feed(next_boot, rmc, 14000);
+	assert(map_updates == 2 && map_gap); // Do not draw across an invalid fix.
+	feed(next_boot, rmc, 14500);
+	assert(map_updates == 2); // Map sample rate stays bounded.
 	puts("Track logger regression tests passed");
 }

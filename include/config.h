@@ -6,8 +6,9 @@ namespace Config {
 // Touch controller is unconfirmed (3248S035R: XPT2046; C: GT911).
 // Use BOOT controls until the exact touch variant and wiring are identified.
 constexpr bool resistive_touch_enabled = false;
-constexpr int gps_rx = 35;
-constexpr int gps_tx = 22;  // UART idle output only; leave GPS RX disconnected.
+// P3 UART2: directions are named from the ESP32 perspective.
+constexpr int gps_rx = 35; // P3 IO35 <- GPS TX.
+constexpr int gps_tx = 22; // P3 IO22 -> GPS RX; available for receiver commands.
 constexpr uint32_t gps_baud = 9600;
 constexpr uint32_t stale_ms = 2500;  // Appropriate for a 1 Hz receiver.
 constexpr uint32_t render_ms = 200;

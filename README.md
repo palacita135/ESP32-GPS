@@ -6,6 +6,35 @@ supplies speed over UART; the Accord's ECU and OBD1 wiring are not involved.
 An OBD adapter is not required for this project. Engine RPM, coolant readings,
 and ECU diagnostics would be a separate, vehicle-specific interface project.
 
+## Screen examples
+
+Illustrative previews of the 480x320 screens, using sample GPS/session values.
+Text approximates the TFT fonts; these are not photographs or hardware captures.
+The MAP background below is a synthetic street diagram, not an actual location.
+On the device, street tiles come from OpenStreetMap around a valid GPS position.
+
+### SPEED
+
+![SPEED screen with white racing digits, trip, maximum speed and GPS satellites](docs/images/speed-ui.png)
+
+### MAP
+
+![MAP example with a blue location marker edged in white and a red session track](docs/images/map-ui.png)
+
+Your current position is blue with a white border. It turns orange after
+2.5 seconds without a fresh position. The session track is red; GPS outages
+leave gaps. Press BOOT briefly to switch between SPEED and MAP.
+
+### Speed warning: 180 km/h or higher
+
+![Animated speed warning alternating red and black with white 180 digits and TOO FAST](docs/images/speed-warning.gif)
+
+With fresh speed at or above 180 km/h, the background alternates red/black
+every 400 ms while the speed stays white and `TOO FAST` appears. MAP switches
+back to SPEED during the warning. A [static red-phase preview](docs/images/speed-warning.png)
+is also available. Regenerate previews with `python scripts/generate-ui-previews.py`
+(requires Pillow).
+
 ## Features
 
 - Static full-screen color `palacj.png` boot splash for three seconds.
@@ -21,10 +50,11 @@ and ECU diagnostics would be a separate, vehicle-specific interface project.
 - `0` immediately after an RMC void fix, or after 2.5 seconds without valid speed.
 - Satellite count from fresh GGA data; missing/stale counts show `--`.
 - Session trip distance integrated from speed, and session maximum speed.
-- Press BOOT to switch day/night brightness. Hold it for two seconds to reset
+- Press BOOT to switch SPEED / MAP. Hold it for two seconds to reset
   trip/max **only with a fresh zero-speed reading**; release it before powering
   up or resetting. Touch is disabled until the R/C variant is confirmed.
-- Wi-Fi/Bluetooth disabled; bounded UART processing and no blocking fix wait.
+- 2.4 GHz Wi-Fi hotspot setup and on-device OSM street map, with live GPS
+  marker and a simplified session route. Bluetooth disabled.
 - Automatic SD CSV track per boot: WGS84 longitude/latitude, GPS UTC, elapsed
   milliseconds, recent GGA altitude, altitude age and raw GPS speed.
 
@@ -44,10 +74,10 @@ have a regulator and a different VCC requirement.
 
 | GPS connection | CYD connection |
 | --- | --- |
-| TX, 3.3 V logic | Exposed **IO35**, verify exact board connector pinout |
-| GND | GND / common supply ground |
-| VCC | Regulated supply matching the exact breakout's datasheet |
-| RX | Leave disconnected; this firmware only listens |
+| TX, 3.3 V logic | P3 **IO35** (ESP32 UART2 RX) |
+| GND | CN1 **GND**, common with P3 GND |
+| VCC | CN1 **3.3V**, only for a breakout supporting that supply |
+| RX, 3.3 V logic | P3 **IO22** (ESP32 UART2 TX) |
 
 Power the CYD through its USB socket with regulated **5 V**. Use a separate
 appropriate GPS supply branch if needed. For a breakout explicitly specified
@@ -59,14 +89,17 @@ Identify connector pins by board markings/continuity, not wire colors or a
 left-to-right drawing: connector orientation and board revisions differ.
 GPIO35 is input-only, suitable for UART RX. GPIO27 is the display backlight.
 GPIO21 can be used by capacitive touch and is not assumed spare.
-GPIO22 is reserved as UART TX but is not connected
-to the GPS in this design. No ESP32 signal pin may receive 5 V or vehicle 12 V.
+GPIO22 is enabled as UART2 TX and can connect to GPS RX. UART2 runs at
+9600 baud, 8-N-1. The firmware receives NMEA and does not currently send
+receiver configuration commands; connecting GPS RX makes that direction
+available without changing the receiver settings. No ESP32 signal pin may
+receive 5 V or vehicle 12 V.
 
 Display: ST7796, MISO12, MOSI13, SCLK14, CS15, DC2, BL27, HSPI.
-The 480x320 landscape UI uses a 76,800-byte 4-bit sprite with an explicit color
-palette for full-screen updates. It is allocated before SD initialization to
-reduce heap fragmentation. If allocation still fails, the same UI draws directly
-to the LCD; this fallback may flicker but does not stop at an allocation error.
+The 480x320 landscape SPEED UI is drawn through a 480x40 4-bit strip sprite
+(9,600 bytes) with an explicit palette. Each strip is composed off-screen and
+pushed without first blanking the LCD. This reduces RAM demand when Wi-Fi is
+enabled. If even the strip cannot be allocated, direct drawing remains available.
 SD uses VSPI: CLK18, MISO19, MOSI23, CS5, at 10 MHz.
 Touch variants differ: R uses XPT2046; C uses GT911. Touch initialization and
 polling are disabled by default. Do not enable the old 2.8-inch touch pin setup
@@ -195,7 +228,86 @@ Restore the speedometer after testing:
 & "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -e cyd -t upload --upload-port COM3
 ```
 
-## SD tracks and QGIS
+## Hotspot and MAP page
+
+Short-press BOOT to alternate SPEED and MAP (replaces DAY/NIGHT). Brightness is
+the configured day level. Hold BOOT for two seconds for the existing stopped-only
+trip/max reset. An active 180 km/h warning returns to SPEED so the red warning
+remains visible. MAP is north-up, follows your position, and uses fixed zoom 16;
+there is no pan, zoom, route planning, Strava upload or account integration.
+
+1. Insert a FAT32 microSD before power-on.
+2. Enable a **2.4 GHz WPA2** smartphone/modem hotspot.
+3. Flash the firmware and short-press BOOT to open MAP.
+4. When no credentials are configured, MAP shows the
+   **PALACITA-SETUP** Wi-Fi network and its randomly generated password.
+5. Join that network from a phone/laptop and open **http://192.168.4.1**.
+   Enter your hotspot SSID/password and press Connect.
+6. Re-enable the phone hotspot if joining the setup network turned it off.
+   ESP32 remembers credentials in NVS and reconnects on subsequent boots.
+   The setup server and AP stop when the hotspot connects.
+7. Outdoors, wait for a valid RMC position. The blue marker is your recent
+   position; orange indicates a stale last-known position. A red line is the
+   session route and does not connect across invalid fixes or GPS outages.
+
+Configured hotspots are retried every 15 seconds, including when the phone
+hotspot starts after the ESP32. MAP shows hotspot-not-found, authentication,
+or handshake failures; the 115200-baud serial monitor prints the disconnect
+reason and the IP/channel/signal strength on connection. Wi-Fi modem sleep is
+disabled for connection stability and map latency, increasing power use.
+For a missing hotspot, check that its band is 2.4 GHz and security is WPA2
+rather than WPA3-only. To replace saved credentials using the portal, remove
+any local build override and erase flash before uploading (also erases trip
+settings stored in NVS).
+
+Setup credentials are not committed or printed to serial. NVS is device storage,
+not encrypted credential storage by default. Configure while parked; setup HTTP
+is on the password-protected local AP, not a public web service.
+
+An optional include/wifi_credentials.local.h can define PALACITA_WIFI_SSID and
+PALACITA_WIFI_PASSWORD to automatically configure a local firmware build. This
+file is Git-ignored; the credentials are embedded in that firmware and saved to
+device NVS. Local definitions override provisioned values on each boot; remove
+the file and rebuild to return to portal-managed configuration. Do not publish
+firmware binaries containing private credentials.
+
+OSM PNG street tiles are requested by a background HTTPS task only while the
+visible MAP page needs them. Only the current viewport is requested, with an
+identifying User-Agent, visible OpenStreetMap attribution, modest request rates,
+and a persistent SD cache in /tiles. Tiles are retained without automatic
+expiration, meeting the minimum seven-day retention rule; no area-download or
+prefetch feature is provided. Tile service is best-effort. New tiles need internet
+and network time for certificate validation; cached tiles can be reused during
+connection loss. A missing SD card still permits live position/route display on
+a plain background but prevents tile downloads and persistent track storage.
+
+The route uses at most 512 RAM points, progressively thinning older samples to
+retain the session overview. The CSV retains every logged point. Coordinates are
+WGS84; map placement uses the standard Web Mercator tile equations with latitude
+clamping and dateline wrapping. Satellite acquisition and map download progress
+are independent.
+
+The SPEED sprite is released while MAP is open to make room for PNG/TLS memory.
+Map tile completions restart the missing-tile scan without clearing the screen.
+Loaded tiles and unchanged status text are retained; moving the map redraws
+tiles in place. Full-screen clearing occurs on page entry, not every refresh.
+SD operations and PNG decoding stay in the main loop; the network worker never
+touches SD/TFT/GPS state. SD and PNG work can still cause short stalls; verify
+UART reception and latency on hardware. Tile PNGs larger than 48 KiB are rejected.
+
+The app now uses PlatformIO's **huge_app.csv** partition layout (3 MiB app,
+no OTA slot). Upload the whole PlatformIO project normally so the partition table
+is updated. No erase-flash command is required. TLS roots can be refreshed with
+python scripts/update-map-ca.py (requires certifi); it checks the live server's
+certificate chain before writing the public trust anchors.
+
+Hardware checks: complete provisioning, confirm Wi-Fi reconnects after restart,
+check at least one OSM tile, compare the marker with a known location, walk a
+short route, test signal loss/recovery and repeated page switching, and confirm
+CSV logging continues while tiles load. Compilation and host tests do not prove
+these physical flows work.
+
+## SD track files
 
 Insert a FAT32-formatted microSD card before power-on. The firmware creates
 `/tracks/TRK00001.csv`, then the next unused numbered file on each subsequent
@@ -249,7 +361,7 @@ Open a session in QGIS through **Data Source Manager > Delimited Text**:
    in the group key; different files restart their segment and sequence numbers.
 5. Export to a GeoPackage to preserve the layer and chosen field types.
 
-This records a route for mapping in QGIS; it does not add an on-device basemap.
+The SD CSV keeps full recorded points independently of the on-device MAP page.
 
 Each CSV point is flushed immediately, and CSV requires no final closing tag.
 Abrupt power removal can still lose the last point, leave a partial final row,
@@ -286,7 +398,7 @@ Hardware acceptance steps:
 3. Outside with sky view, wait for a fix and check stationary speed and satellites.
 4. Disconnect GPS TX: the screen must show `0` / `NO GPS DATA` after 2.5 s.
 5. Reconnect and regain fix: trip must not jump across the outage.
-6. Test BOOT dimming and stopped-only long-hold reset while parked.
+6. Test BOOT page switching and stopped-only long-hold reset while parked.
 7. Have a passenger compare speed against an independent GPS on a clear-sky
    drive; check acceleration latency, antenna placement and reception gaps.
 8. Verify restart behavior during engine cranking and supply stability with

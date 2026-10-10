@@ -87,6 +87,7 @@ public:
 		if (is_rmc && (count < 10 || !coordinate(fields[3], fields[4], 2) ||
 		    !coordinate(fields[5], fields[6], 3))) {
 			gap_ = true;
+			live_gap_ = true;
 			if (file_)
 				state_ = "SD WAIT FIX";
 			return;
@@ -120,6 +121,8 @@ public:
 	}
 
 	const char *state() const { return state_; }
+	using PositionCallback = void (*)(double, double, bool, uint32_t);
+	void on_position(PositionCallback callback) { position_callback_ = callback; }
 
 private:
 	static bool coordinate(const char *value, const char *hemisphere, size_t degrees)
@@ -177,6 +180,7 @@ private:
 		if (!active || !gps_.location.isValid() ||
 		    !gps_.location.isUpdated() || gps_.location.age() > 100) {
 			gap_ = true;
+			live_gap_ = true;
 			alt_valid_ = false;
 			if (file_)
 				state_ = "SD WAIT FIX";
@@ -184,9 +188,16 @@ private:
 		}
 		const double lat = gps_.location.lat();
 		const double lon = gps_.location.lng();
-		if (!file_ || !std::isfinite(lat) || !std::isfinite(lon) ||
+		if (!std::isfinite(lat) || !std::isfinite(lon) ||
 		    fabs(lat) > 90 || fabs(lon) > 180)
 			return;
+		if (!live_point_ || now - live_ms_ >= Config::track_interval_ms) {
+			if (position_callback_)
+				position_callback_(lat, lon, live_gap_ ||
+					(live_point_ && now - live_ms_ > Config::stale_ms), now);
+			live_ms_ = now; live_point_ = true; live_gap_ = false;
+		}
+		if (!file_) return;
 		if (have_point_ && now - last_point_ms_ < Config::track_interval_ms)
 			return;
 		char utc[32] = "";
@@ -244,4 +255,7 @@ private:
 	uint32_t sequence_ = 0, segment_ = 1, last_point_ms_ = 0, alt_ms_ = 0;
 	double alt_m_ = 0;
 	bool have_point_ = false, gap_ = false, alt_valid_ = false;
+	PositionCallback position_callback_ = nullptr;
+	uint32_t live_ms_ = 0;
+	bool live_point_ = false, live_gap_ = false;
 };
