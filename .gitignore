@@ -1,0 +1,9 @@
+.pio/
+.vscode/*
+!.vscode/extensions.json
+__pycache__/
+*.exe
+.env
+.env.*
+*.pem
+*.key
