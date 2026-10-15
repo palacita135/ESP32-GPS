@@ -12,6 +12,7 @@
 #include "map_math.h"
 #include "tile_buffer.h"
 #include "map_root_ca.h"
+#include "config.h"
 
 // Main loop exclusively owns SD/TFT/PNG/track state. Worker owns HTTPS.
 class StreetMap {
@@ -52,12 +53,13 @@ public:
 	explicit StreetMap(TFT_eSPI &display) : tft_(display) {}
 	void begin()
 	{
+		cache_ready_ = SD.cardType() != CARD_NONE && SD.mkdir("/tiles");
+		if (Config::offline_maps_only) return;
 		requests_ = xQueueCreate(1, sizeof(Request));
 		results_ = xQueueCreate(1, sizeof(Result));
 		if (requests_ && results_ &&
 		    xTaskCreate(worker, "osm-https", 8192, this, 1, nullptr) == pdPASS)
 			worker_ready_ = true;
-		cache_ready_ = SD.cardType() != CARD_NONE && SD.mkdir("/tiles");
 	}
 	void activate(bool active)
 	{
@@ -233,6 +235,23 @@ public:
 	const char *status() const
 	{
 		if (!cache_ready_) return "Insert FAT32 SD for map tiles";
+		if (!centered_) return "Waiting for GPS position";
+		if (decoder_failed_) return "Map decoder: low RAM";
+		if (Config::offline_maps_only) {
+			int visible = 0, loaded = 0;
+			for (int slot = 0; slot < 9; ++slot) {
+				const int tx = base_x_ + slot % 3, ty = base_y_ + slot / 3;
+				const int px = static_cast<int>(tx * 256.0 - center_.x + 240);
+				const int py = static_cast<int>(ty * 256.0 - center_.y + 166);
+				if (px >= 480 || px + 256 <= 0 || py >= 300 || py + 256 <= 32 ||
+				    ty < 0 || ty >= (1 << zoom_)) continue;
+				++visible;
+				if (loaded_[slot]) ++loaded;
+			}
+			if (visible && loaded == visible) return "Offline map loaded";
+			if (cursor_ < 9 || dirty_) return "Reading SD map tiles";
+			return loaded ? "Offline map: missing tiles" : "No offline tiles here";
+		}
 		if (!worker_ready_) return "Network worker: low RAM";
 		if (WiFi.status() != WL_CONNECTED) return "WiFi not connected / cached tiles";
 		if (!centered_) return "Waiting for GPS position";
@@ -443,7 +462,7 @@ private:
 	MapMath::Pixel position_{}, center_{};
 	uint32_t last_fix_ms_ = 0, last_sweep_ms_ = 0, last_overlay_ms_ = 0, retry_ms_ = 0;
 	int cursor_ = 0, base_x_ = 0, base_y_ = 0, tile_x_ = 0, tile_y_ = 0;
-	static constexpr int zoom_ = 16;
+	static constexpr int zoom_ = Config::map_zoom;
 	bool active_ = false, have_fix_ = false, centered_ = false, dirty_ = true;
 	bool pending_gap_ = false;
 	bool decoder_failed_ = false;

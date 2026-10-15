@@ -56,6 +56,7 @@ void loop()
 #include "racing_digits.h"
 #include "hotspot.h"
 #include "street_map.h"
+#include "map_transfer.h"
 namespace {
 TrackLogger track;
 HardwareSerial gps_uart(2);
@@ -63,6 +64,7 @@ TinyGPSPlus gps;
 TFT_eSPI tft;
 Hotspot hotspot;
 StreetMap street_map(tft);
+MapTransfer map_transfer;
 TFT_eSprite frame(&tft);
 SpeedState speed(Config::stale_ms, Config::stop_threshold_kmh,
 		 Config::maximum_kmh, true);
@@ -250,6 +252,7 @@ void draw_splash()
 
 void setup()
 {
+	Serial.setRxBufferSize(2048);
 	Serial.begin(115200);
 	btStop();
 	Serial.printf("BOOT diagnostics: reset_reason=%d heap=%u largest=%u\n",
@@ -299,6 +302,7 @@ void loop()
 {
 	poll_gps();
 	const uint32_t now = millis();
+	map_transfer.poll(now);
 	poll_controls(now);
 	if (map_page && speed.fresh(now) && speed.speed() >= Config::speed_warning_kmh)
 		set_map_page(false);
@@ -308,7 +312,7 @@ void loop()
 		splash_visible = false;
 		tft.fillScreen(TFT_BLACK);
 	}
-	if (!splash_visible)
+	if (!splash_visible && !map_transfer.active())
 		street_map.poll(now);
 	if (!splash_visible && now - last_render_ms >= Config::render_ms) {
 		last_render_ms = now;
@@ -320,7 +324,7 @@ void loop()
 			const bool refresh = last_revision != street_map.revision();
 			last_revision = street_map.revision();
 			const String wifi_status = hotspot.status();
-			const char *map_status = street_map.status();
+			const char *map_status = map_transfer.active() ? "Copying map tiles to SD" : street_map.status();
 			const String tile_status = strcmp(map_status, "Waiting for GPS position") == 0 ? rmc.state(now) : map_status;
 			tft.setTextDatum(TR_DATUM);
 			tft.setTextColor(TFT_WHITE, TFT_BLACK);

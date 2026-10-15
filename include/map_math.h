@@ -1,7 +1,8 @@
 #pragma once
 #include <cmath>
+#include "config.h"
 namespace MapMath {
-constexpr int zoom = 16;
+constexpr int zoom = Config::map_zoom;
 constexpr double world = 256.0 * (1 << zoom);
 struct Pixel { double x, y; };
 inline double world_at(int level) { return 256.0 * (1 << level); }

@@ -324,7 +324,7 @@ visible MAP page needs them. Only the current viewport is requested, with an
 identifying User-Agent, visible OpenStreetMap attribution, modest request rates,
 and a persistent SD cache in /tiles. Tiles are retained without automatic
 expiration, meeting the minimum seven-day retention rule; no area-download or
-prefetch feature is provided. Tile service is best-effort. New tiles need internet
+prefetch feature is provided on-device. For PC-prepared offline SD packs, see [Offline Indonesia maps](docs/offline-maps.md). Tile service is best-effort. New tiles need internet
 and network time for certificate validation; cached tiles can be reused during
 connection loss. A missing SD card still permits live position/route display on
 a plain background but prevents tile downloads and persistent track storage.
