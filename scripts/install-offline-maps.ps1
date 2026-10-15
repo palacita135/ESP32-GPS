@@ -34,7 +34,7 @@ try {
         & python scripts/prepare-offline-map.py $raster --output offline-work/regional-sd --bbox @boundsArgs --zoom 12 --write
         if ($LASTEXITCODE -ne 0) { throw "Tile preparation failed: $($region.Name)" }
     }
-    & python scripts/upload-map-serial.py --port $Port --tiles offline-work/regional-sd/tiles --zoom 12
+    & python scripts/upload-map-serial.py --port $Port --tiles offline-work/regional-sd/maps --zoom 12
     if ($LASTEXITCODE -ne 0) { throw 'Map transfer failed. Tap RESET before retrying with -SkipFlash.' }
     Write-Host 'Regional tile copy complete; files passed SD readback CRC verification. Verify the MAP display outdoors.'
 } finally {

@@ -52,7 +52,7 @@ is also available. Regenerate previews with `python scripts/generate-ui-previews
 - Session trip distance integrated from speed, and session maximum speed.
 - Press BOOT to switch SPEED / MAP. Hold it for two seconds to reset
   trip/max **only with a fresh zero-speed reading**; release it before powering
-  up or resetting. Touch controls are disabled; MAP follows GPS automatically at zoom 16.
+  up or resetting. Touch controls are disabled; MAP follows GPS automatically at the configured zoom (currently 12).
 - 2.4 GHz Wi-Fi hotspot setup and on-device OSM street map, with live GPS
   marker and a simplified session route. Bluetooth disabled.
 - Automatic SD CSV track per boot: WGS84 longitude/latitude, GPS UTC, elapsed
@@ -140,7 +140,7 @@ enabled. If even the strip cannot be allocated, direct drawing remains available
 SD uses VSPI: CLK18, MISO19, MOSI23, CS5, at 10 MHz.
 Touch variants differ: R uses XPT2046; C uses GT911. Touch is disabled.
 The touch controller is deselected on CS33 so it does not drive the display SPI
-bus. BOOT switches SPEED/MAP; MAP always follows GPS at zoom level 16.
+bus. BOOT switches SPEED/MAP; MAP always follows GPS at the configured zoom (currently 12).
 
 ## Power and mounting in the car
 
@@ -271,13 +271,13 @@ Short-press BOOT to alternate SPEED and MAP (replaces DAY/NIGHT). Brightness is
 the configured day level. Hold BOOT for two seconds for the existing stopped-only
 trip/max reset. An active 180 km/h warning returns to SPEED so the red warning
 remains visible. MAP is north-up and follows your position while moving.
-MAP stays at zoom level 16 and follows your position automatically while
+MAP stays at the configured zoom (currently 12) and follows your position automatically while
 moving. There are no zoom, pan or recenter buttons and no touch calibration.
 BOOT still switches SPEED/MAP. There is no route planning, Strava upload or
 account integration.
 
 Visible missing tiles download automatically as you move and are saved to
-`/tiles/16_x_y.png` on the SD card. Downloads use chunks of at most 2 KB through
+`/maps/12/x/y.png` on the SD card. Downloads use chunks of at most 2 KB through
 a bounded queue; only the main loop writes to SD. Temporary `.part` files are
 renamed after successful validation. Successful requests do not wait between
 tiles; failures back off 30 seconds. Mobile data, server response, TLS and SD
@@ -322,7 +322,7 @@ firmware binaries containing private credentials.
 OSM PNG street tiles are requested by a background HTTPS task only while the
 visible MAP page needs them. Only the current viewport is requested, with an
 identifying User-Agent, visible OpenStreetMap attribution, modest request rates,
-and a persistent SD cache in /tiles. Tiles are retained without automatic
+and a persistent SD cache in /maps (legacy /tiles remains readable). Tiles are retained without automatic
 expiration, meeting the minimum seven-day retention rule; no area-download or
 prefetch feature is provided on-device. For PC-prepared offline SD packs, see [Offline Indonesia maps](docs/offline-maps.md). Tile service is best-effort. New tiles need internet
 and network time for certificate validation; cached tiles can be reused during

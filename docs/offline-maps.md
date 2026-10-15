@@ -1,15 +1,15 @@
 # Offline Indonesia maps on a 32 GB SD card
 
-The ESP32 displays raster PNG tiles at **zoom 16 only**, 256 x 256 pixels,
+The ESP32 displays raster PNG tiles at **the configured zoom (12 for the current regional pack)**, 256 x 256 pixels,
 maximum 48 KiB compressed per tile. It cannot render OSM PBF, vector MBTiles,
 PMTiles or Garmin maps. Prepare maps on the PC, then copy the resulting
-`tiles` directory into the root of a FAT32 card. Keep `/tracks` intact.
+`maps` directory into the root of a FAT32 card. Keep `/tracks` intact.
 
 A marketed 32 GB card has about 29.8 GiB before formatting. Start with a city
 or riding area; reserve space for logs. Nationwide zoom-16 coverage can require
 millions of files, including sea tiles in rectangular exports. Do not assume
 it fits. Very large flat FAT directories also increase lookup/copy times;
-this implementation preserves the existing firmware cache layout.
+Regional packs use `/maps/z/x/y.png`, keeping each FAT32 directory small. The old `/tiles/z_x_y.png` cache remains readable as a fallback. A flat directory of long filenames can reach the FAT32 directory-entry limit even when the card has free space.
 
 ## 1. Download raw data, not public web tiles
 
@@ -45,12 +45,12 @@ https://operations.osmfoundation.org/policies/tiles/
    the device's Web Mercator tile grid.
 4. Remove online XYZ/WMS layers so the export uses local data only.
 5. Open Processing Toolbox > **Generate XYZ tiles (MBTiles)**.
-6. Choose a small area first, minimum and maximum zoom **16**, PNG format,
+6. Choose a small area first, minimum and maximum zoom **12**, PNG format,
    opaque background, and output e.g. `offline-work/java-area.mbtiles`.
    Keep raster tiles at 256 x 256; include a margin around intended routes.
 7. Inspect the rendered map in QGIS before preparing the SD card. Check road
    visibility, labels, GPS alignment and coverage. Exporting at other zooms
-   will not help the current fixed-zoom firmware.
+   will not help the configured firmware zoom (currently 12).
 
 QGIS tool reference:
 https://documentation.qgis.org/3.44/en/docs/user_manual/processing_algs/qgis/rastertools.html
@@ -61,15 +61,15 @@ https://documentation.qgis.org/3.44/en/docs/user_manual/processing_algs/qgis/ras
 python -m pip install -r scripts/requirements-offline-map.txt
 # Example Jakarta bounds: west south east north, decimal WGS84 degrees.
 # Replace with your actual rendered area.
-python scripts/prepare-offline-map.py offline-work/java-area.mbtiles --output offline-work/sdcard --bbox 106.70 -6.35 107.00 -6.05
+python scripts/prepare-offline-map.py offline-work/java-area.mbtiles --output offline-work/sdcard --bbox 106.70 -6.35 107.00 -6.05 --zoom 12
 # Add --write after reviewing the size estimate.
-python scripts/prepare-offline-map.py offline-work/java-area.mbtiles --output offline-work/sdcard --bbox 106.70 -6.35 107.00 -6.05 --write
+python scripts/prepare-offline-map.py offline-work/java-area.mbtiles --output offline-work/sdcard --bbox 106.70 -6.35 107.00 -6.05 --zoom 12 --write
 ```
 
-Copy `offline-work/sdcard/tiles` and `MAP-LICENSE.txt` to the FAT32 card root.
+Copy `offline-work/sdcard/maps` and `MAP-LICENSE.txt` to the FAT32 card root.
 You may instead set `--output` to the confirmed SD drive root. The tool reads
 standard MBTiles TMS rows and flips them into XYZ filenames such as
-`tiles/16_52197_33900.png`. It flattens transparency, quantizes colors to fit
+`maps/12/3262/2118.png`. It flattens transparency, quantizes colors to fit
 48 KiB, writes atomically, and retains identical existing files on repeat runs.
 Quantization can reduce visual quality; inspect the resulting PNGs.
 It rejects vector tiles and non-256-pixel images. Missing tiles in the source
@@ -85,7 +85,7 @@ https://www.openstreetmap.org/copyright
 ## 4. Device operation
 
 SD tiles are preferred automatically, even with no hotspot. For a deployment
-that never downloads missing map tiles, set `Config::offline_maps_only = true`
+that never downloads missing map tiles, use `Config::offline_maps_only = true` (the current default)
 in `include/config.h`, then build/upload normally. This avoids the HTTPS
 worker and its queues, but does not disable the separate Wi-Fi setup interface.
 Missing coverage stays a grey background with the GPS/track overlay.
@@ -94,3 +94,12 @@ Test first with a small pack: power off, insert card, boot without internet,
 obtain a GPS fix outdoors, open MAP and confirm tiles/position/track. Move
 across tile boundaries, reboot, then check CSV logging still works. PC build
 and conversion tests do not prove SD performance or physical device behavior.
+
+## Card-reader installation
+
+The prepared regional files use `/maps/12/x/y.png`. Copy the `maps` directory
+to the FAT32 card root and keep `MAP-LICENSE.txt` beside it. Preserve `/tracks`.
+The firmware must include sharded-path support; flash the current build before
+using this layout. Older flat `/tiles` files can coexist and need not be deleted.
+Do not flatten a regional pack into one directory: the previous flat copy hit
+Windows error 82 at roughly 21,830 long filenames despite available space.

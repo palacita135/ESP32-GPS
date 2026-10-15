@@ -77,12 +77,13 @@ def main():
         args.output.mkdir(parents=True, exist_ok=True)
         if shutil.disk_usage(args.output).free < required:
             raise ValueError('Insufficient free space for conservative SD budget')
-        tiles = args.output / 'tiles'
+        tiles = args.output / 'maps'
         tiles.mkdir(exist_ok=True)
         written = 0
         for x, row, data in db.execute(
                 'SELECT tile_column,tile_row,tile_data ' + query, params):
-            path = tiles / f'{args.zoom}_{x}_{n - 1 - row}.png'
+            path = tiles / str(args.zoom) / str(x) / f'{n - 1 - row}.png'
+            path.parent.mkdir(parents=True, exist_ok=True)
             payload = normalize(data)
             if path.exists() and path.read_bytes() == payload:
                 continue

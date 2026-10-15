@@ -33,7 +33,7 @@ class OfflineTests(unittest.TestCase):
             subprocess.run(command, check=True, capture_output=True)
             self.assertFalse((root / 'sd').exists())
             subprocess.run(command + ['--write'], check=True, capture_output=True)
-            tile = root / 'sd' / 'tiles' / f'16_{x}_{y}.png'
+            tile = root / 'sd' / 'maps' / '16' / str(x) / f'{y}.png'
             self.assertLessEqual(tile.stat().st_size, 49152)
             with Image.open(tile) as result:
                 self.assertEqual(result.convert('RGB').getpixel((0, 0)), (255, 255, 255))

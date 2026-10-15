@@ -102,9 +102,14 @@ public:
 			    x >= (1U << Config::map_zoom) || y >= (1U << Config::map_zoom) || bytes < 33 || bytes > 49152) {
 				Serial.println("MAP ERROR command"); return;
 			}
-			snprintf(path_, sizeof(path_), "/tiles/%d_%u_%u.png", Config::map_zoom, x, y);
+			snprintf(path_, sizeof(path_), "/maps/%d/%u/%u.png", Config::map_zoom, x, y);
 			snprintf(temporary_, sizeof(temporary_), "%s.upload", path_);
-			if (SD.cardType() == CARD_NONE || !SD.mkdir("/tiles")) { abort("sd"); return; }
+			char directory[48];
+			if (SD.cardType() == CARD_NONE || !SD.mkdir("/maps")) { abort("sd"); return; }
+			snprintf(directory, sizeof(directory), "/maps/%d", Config::map_zoom);
+			if (!SD.mkdir(directory)) { abort("directory"); return; }
+			snprintf(directory, sizeof(directory), "/maps/%d/%u", Config::map_zoom, x);
+			if (!SD.mkdir(directory)) { abort("directory"); return; }
 			char backup[56];
 			snprintf(backup, sizeof(backup), "%s.previous", path_);
 			if (!SD.exists(path_) && SD.exists(backup)) SD.rename(backup, path_);

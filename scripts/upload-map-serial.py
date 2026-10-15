@@ -44,14 +44,18 @@ def main():
             raise RuntimeError('Could not enable fast serial transfer')
         port.baudrate = 921600
         count = skipped = 0
-        for path in sorted(args.tiles.glob(f'{args.zoom}_*_*.png')):
+        for path in sorted(args.tiles.rglob('*.png')):
             match = re.fullmatch(rf'{args.zoom}_(\d+)_(\d+)\.png', path.name)
-            if not match:
+            if match:
+                x, y = map(int, match.groups())
+            elif (path.stem.isdigit() and path.parent.name.isdigit()
+                  and path.parent.parent.name == str(args.zoom)):
+                x, y = int(path.parent.name), int(path.stem)
+            else:
                 continue
             data = path.read_bytes()
             if not (33 <= len(data) <= 49152 and data[:8] == b'\x89PNG\r\n\x1a\n'):
                 raise ValueError(f'Invalid prepared tile: {path}')
-            x, y = map(int, match.groups())
             crc = zlib.crc32(data)
             port.write(f'MAPPUT {x} {y} {len(data)} {crc:08x}\n'.encode())
             reply = response(port)

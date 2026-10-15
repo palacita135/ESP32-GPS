@@ -53,7 +53,7 @@ public:
 	explicit StreetMap(TFT_eSPI &display) : tft_(display) {}
 	void begin()
 	{
-		cache_ready_ = SD.cardType() != CARD_NONE && SD.mkdir("/tiles");
+		cache_ready_ = SD.cardType() != CARD_NONE && SD.mkdir("/maps");
 		if (Config::offline_maps_only) return;
 		requests_ = xQueueCreate(1, sizeof(Request));
 		results_ = xQueueCreate(1, sizeof(Result));
@@ -126,6 +126,11 @@ public:
 					cache_error_ = "";
 					prefix_count_ = 0;
 					char path[64]; tile_path(path, result.tile);
+					char directory[64];
+					snprintf(directory, sizeof(directory), "/maps/%d", result.tile.zoom);
+					SD.mkdir(directory);
+					snprintf(directory, sizeof(directory), "/maps/%d/%d", result.tile.zoom, result.tile.x);
+					SD.mkdir(directory);
 					temporary_path_ = String(path) + ".part";
 					if (SD.exists(temporary_path_)) SD.remove(temporary_path_);
 					download_file_ = SD.open(temporary_path_, FILE_WRITE);
@@ -200,6 +205,12 @@ public:
 			    ty >= 0 && ty < (1 << zoom_)) {
 				Request request{MapMath::wrap_tile(tx, zoom_), ty, zoom_};
 				char path[64]; tile_path(path, request);
+				// Preserve older on-device caches while regional packs use small directories.
+				if (cache_ready_ && !SD.exists(path)) {
+					char legacy[64];
+					snprintf(legacy, sizeof(legacy), "/tiles/%d_%d_%d.png", request.zoom, request.x, request.y);
+					if (SD.exists(legacy)) snprintf(path, sizeof(path), "%s", legacy);
+				}
 				if (cache_ready_ && SD.exists(path)) {
 					if (!loaded_[slot] && !busy_ && static_cast<int32_t>(now - decode_retry_ms_) >= 0)
 						loaded_[slot] = draw_tile(path, px, py);
@@ -308,7 +319,7 @@ private:
 	}
 	static void tile_path(char *path, const Request &request)
 	{
-		snprintf(path, 64, "/tiles/%d_%d_%d.png", request.zoom, request.x, request.y);
+		snprintf(path, 64, "/maps/%d/%d/%d.png", request.zoom, request.x, request.y);
 	}
 	static StreetMap *&decode_owner() { static StreetMap *owner = nullptr; return owner; }
 	static void *open_file(const char *, int32_t *size)

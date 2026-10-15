@@ -6,7 +6,7 @@ namespace Config {
 constexpr int map_zoom = 12; // Regional offline pack; rebuild for 16 for street detail.
 // Keep SD rendering available without allocating the HTTPS worker/queues.
 constexpr bool offline_maps_only = true;
-// MAP automatically follows GPS at fixed zoom 16; use BOOT for pages.
+// MAP automatically follows GPS at map_zoom; use BOOT for pages.
 constexpr bool resistive_touch_enabled = false;
 // P3 UART2: directions are named from the ESP32 perspective.
 constexpr int gps_rx = 35; // P3 IO35 <- GPS TX.
